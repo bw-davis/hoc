@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <signal.h>
 #include <setjmp.h>
+
 typedef struct Symbol {		/* symbol table entry */
 	char *name;
 	short type;		/* VAR, BLTIN, UNDEF */
@@ -48,4 +49,4 @@ char **gargv;			/* global argument list */
 int gargc;
 int c;		/* global for use by warning() */
 char *progname;         /* for error messages */
-int lineno = 1;
+//int lineno = 1;

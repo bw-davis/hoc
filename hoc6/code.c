@@ -1,26 +1,4 @@
-#include "hoc.h"
-#include "y.tab.h"
-
-#define	NSTACK	256
-static 	Datum	stack[NSTACK];		/* the stack */
-static 	Datum	*stackp;		/* next free spot on stack */
-
-#define NPROG	2000
-Inst	prog[NPROG];		/* the machine */
-Inst	*progp;			/* next free spot for code generation */
-Inst	*pc;			/* program counter during execution */
-Inst	*progbase = prog;	/* start of current subprogram */
-int 	returning;		/* 1 if return stmt seen */
-
-typedef struct Frame {		/* proc/func call stack frame */
-	Symbol 	*sp;		/* symbol table entry */
-	Inst	*retpc;		/* where to resume after return */
-	Datum	*argn;		/* n-th argument on stack */
-	int nargs;		/* number of arguments */
-} Frame;
-#define NFRAME 100
-Frame	frame[NFRAME];
-Frame	*fp;			/* frame pointer */
+#include "code.h"
 
 void initcode() {		/* initialize for code generation */
 	progp = progbase;

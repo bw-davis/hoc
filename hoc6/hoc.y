@@ -118,12 +118,7 @@ arglist:	/* nothing */	{ $$ = 0; }
 	
 %%
 
-
-
-
-
-
-
+int lineno = 1;
 /*int yylex();
 void yyerror(char *s);
 int warning(char *s, char *t);
@@ -131,14 +126,20 @@ void fpecatch(int sig);
 int backslash(int c);*/
 int main(int argc, char *argv[])        /* hoc2 */
 {
-        //int fpecatch();
+        int i;
 
-        progname = argv[0];
+  	progname = argv[0];
+	if (argc == 1) {		/* fake an argument list */
+		static char *stdinonly[] = { "-" };
+		gargv = stdinonly;
+		gargc = 1;
+	} else {
+		gargv = argv+1;
+		gargc = 1;
+	}
 	init();
-        setjmp(begin);
-        signal(SIGFPE, fpecatch);
-        for (initcode(); yyparse(); initcode())
-		execute(prog);
+	while (moreinput())
+		run();
 	return 0;
 }
 void defnonly(char *s) {		/* warns if illegal definition */
