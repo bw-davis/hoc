@@ -6,16 +6,14 @@ void initcode() {		/* initialize for code generation */
 	fp = frame;
 	returning = 0;
 }
-
 void push(Datum d) {		/* push d onto the stack */
 	if (stackp >= &stack[NSTACK])
 		execerror("stack overflow", (char *) 0);
 	*stackp++ = d;
 }	
-
 Datum pop() {		/* pop and return top elem from stack */
-	if (stackp <= stack)
-		execerror("stack overflow", (char *) 0);
+	if (stackp == stack)
+		execerror("stack underflow", (char *) 0);
 	return *--stackp;
 }
 Inst *code(Inst f) {		/* install one instruction or operand */
@@ -63,7 +61,9 @@ void mul() {
 void div() {
 	Datum d1, d2;
 	d2 = pop();
-	d1 = pop();
+	if (d2.val == 0.0)
+			execerror("division by zero", (char *)0);
+		d1 = pop();
 	d1.val /= d2.val;
 	push(d1);
 }
@@ -75,17 +75,18 @@ void negate() {
 }
 void power() {
 	Datum d1, d2;
+	extern double Pow();
 	d2 = pop();
 	d1 = pop();
 	int i;
-	for (i = 1; i <= d2.val; i++){
-		d1.val *= d1.val;
-	}
+	d1.val = Pow(d1.val, d2.val);
 	push(d1);
 }
 void eval() {		/* evaluate variable on stack */
 	Datum d;
 	d = pop();
+	if (d.sym->type != VAR && d.sym->type != UNDEF)
+			execerror("attempt to evaluate non-variable", d.sym->name);
 	if (d.sym->type == UNDEF)
 		execerror("undefined variable", d.sym->name);
 	d.val = d.sym->u.val;
@@ -137,7 +138,7 @@ void eq() {
 	Datum d1, d2;
         d2 = pop();
         d1 = pop();
-        d1.val = (double)(d1.val = d2.val);
+        d1.val = (double)(d1.val == d2.val);
         push(d1);
 
 }
@@ -159,20 +160,20 @@ void and() {
 	Datum d1, d2;
         d2 = pop();
         d1 = pop();
-        d1.val = (double)(d1.val && d2.val);
+        d1.val = (double)(d1.val != 0.0 && d2.val != 0.0);
         push(d1);
 }
 void or() {
 	Datum d1, d2;
         d2 = pop();
         d1 = pop();
-        d1.val = (double)(d1.val || d2.val);
+        d1.val = (double)(d1.val != 0.0 || d2.val != 0.0);
         push(d1);
 }
 void not() {
 	Datum d1;
 	d1 = pop();
-	d1.val = (double)( ! d1.val);
+	d1.val = (double)( d1.val == 0.0);
 	push(d1);
 }
 void whilecode() {
@@ -266,11 +267,6 @@ void argassign() {		/* store top of stack in argument */
 void prstr() {			/* print string value */
 	printf("%s", (char *) *pc++);
 }
-/*void prexpr() {			/* print numeric value 
-	Datum d;
-	d = pop();
-	printf("%.8g ", d.val);
-}*/
 void varread() {		/* read into variable */
 	Datum d;
 	extern FILE *fin;

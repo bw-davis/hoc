@@ -1,6 +1,6 @@
 #include "init.h"
 
-init() {		/* install constants and built-ins in table */
+void init() {		/* install constants and built-ins in table */
 	int i;
 	Symbol *s;
 

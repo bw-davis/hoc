@@ -1,5 +1,6 @@
 #include "hoc.h"
 #include "y.tab.h"
+//#include "symbol.h"
 
 #define	NSTACK	256
 static 	Datum	stack[NSTACK];		/* the stack */
@@ -51,7 +52,7 @@ void not();
 void whilecode();
 void ifcode();
 void prexpr();
-void define(Symbol *sp);
+//void define(Symbol *sp);
 void call();
 void ret();
 void funcret();

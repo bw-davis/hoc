@@ -157,7 +157,7 @@ void fpecatch(int sig)                  /* catch floating point exceptions */
 {
         execerror("floating point exception", (char *) 0);
 }
-int follow(expect, ifyes, ifno) {
+int follow(int expect, int ifyes, int ifno) {
 	int c = getc(fin);
 
 	if (c == expect)
@@ -225,7 +225,7 @@ int yylex()                     /* hoc1 */
 		}
 		*p = 0;
 		yylval.sym = (Symbol *)emalloc(strlen(sbuf)+1);
-		strcpy(yylval.sym, sbuf);
+		strcpy((char *)yylval.sym, sbuf);
 		return STRING;
 	}
 	 switch(c) {
@@ -269,7 +269,7 @@ int warning(char *s, char *t)
 	if (c == 'n')
 		lineno++;
 }
-void moreinput() {
+int moreinput() {
 	if (gargc-- <= 0)
 		return 0;
 	if (fin && fin != stdin)

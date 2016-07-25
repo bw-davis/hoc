@@ -40,4 +40,4 @@ static struct {			/* Keywords */
 	"print",	PRINT,
 	0,		0,
 };
-init();
+//init();

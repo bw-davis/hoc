@@ -1,5 +1,7 @@
 #include <math.h>
 #include <errno.h>
+#include "hoc.h"
+
 extern int	errno;
 
 double errcheck(double d, char *s);
