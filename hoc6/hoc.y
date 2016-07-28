@@ -1,11 +1,21 @@
 %{
 #include "hoc.h"
-/*#include <stdio.h>
+#include "code.h"
+#include "symbol.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <ctype.h>
 #include <signal.h>
-#include <setjmp.h>*/
+#include <setjmp.h>
+
 #define code2(c1,c2)	code(c1); code(c2)
 #define code3(c1,c2,c3)	code(c1); code(c2); code(c3)
+
+int indef;
+static void varread();
+static void yyerror(char *s);
+static int yylex();
+static void defnonly(char *s);
 %}
 %union {
 	Symbol 	*sym;		/* symbol table pointer */
@@ -31,15 +41,15 @@
 list:		/* nothing */
 	| list '\n'
 	| list defn '\n'
-	| list asgn '\n'	{ code2(pop, STOP); return 1; }
+	| list asgn '\n'	{ code2((Inst)pop, STOP); return 1; }
 	| list stmt '\n'	{ code(STOP); return 1; }
 	| list expr '\n'	{ code2(print, STOP); return 1; }
 	| list error '\n'	{ yyerrok; }
 	;
 asgn:	  VAR '=' expr 		{ code3(varpush,(Inst)$1, assign); $$=$3; }
-	| ARG '=' expr 		{ defnonly("$"); code2(argassign,(Inst)$1); $$=$3; }
+	| ARG '=' expr 		{ defnonly("$"); code2(argassign, (Inst)$1); $$=$3; }
 	;
-stmt:	expr			{ code(pop); }
+stmt:	expr			{ code((Inst)pop); }
 	| RETURN		{ defnonly("return"); code(procret); }
 	| RETURN expr		{ defnonly("return"); $$=$2; code(funcret); }
 	| PROCEDURE begin '(' arglist ')'
@@ -84,7 +94,7 @@ expr:	 NUMBER		{ $$ = code2(constpush, (Inst)$1); }
 	| expr '+' expr 	{ code(add); }
 	| expr '-' expr		{ code(sub); }
 	| expr '*' expr		{ code(mul); }
-	| expr '/' expr		{ code(div); }
+	| expr '/' expr		{ code(divide); }
 	| expr '^' expr		{ code(power); }
 	| '-' expr %prec UNARYMINUS	{ $$ = $2; code(negate); }
 	| expr GT expr		{ code(gt); }
@@ -118,12 +128,28 @@ arglist:	/* nothing */	{ $$ = 0; }
 	
 %%
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include "symbol.h"
+#include "code.h"
+#include "hoc.h"
+#include "init.h"
+
+
+jmp_buf begin;
+char *infile;			/* input file name */
+FILE *fin;				/* input file pointer */
+char **gargv;			/* global argument list */
+int gargc;
+int c;		/* global for use by warning() */
+char *progname;         /* for error messages */
 int lineno = 1;
-/*int yylex();
-void yyerror(char *s);
-int warning(char *s, char *t);
-void fpecatch(int sig);
-int backslash(int c);*/
+extern Inst *pc;
+
+static int moreinput();
+static void run();
+
 int main(int argc, char *argv[])        /* hoc2 */
 {
         int i;
@@ -142,9 +168,18 @@ int main(int argc, char *argv[])        /* hoc2 */
 		run();
 	return 0;
 }
-void defnonly(char *s) {		/* warns if illegal definition */
-	if (!indef)
-		execerror(s, "used outside definition");
+static int warning(char *s, char *t)
+{
+        fprintf(stderr, "%s; %s", progname, s);
+        if (t)
+                fprintf(stderr, " %s", t);
+	if (infile)
+		fprintf(stderr, " in %s", t);
+        fprintf(stderr, " near line %d\n", lineno);
+	while (c != '\n' && c != EOF)
+		c = getc(fin);		/* flush rest of input line */
+	if (c == 'n')
+		lineno++;
 }
 void execerror(char *s, char *t)                /* recover run-time error */
 {
@@ -152,12 +187,15 @@ void execerror(char *s, char *t)                /* recover run-time error */
 	fseek(fin, 0L, 2);		/* flush rest of file */
         longjmp(begin, 0);
 }
-
-void fpecatch(int sig)                  /* catch floating point exceptions */
+static void defnonly(char *s) {		/* warns if illegal definition */
+	if (!indef)
+		execerror(s, "used outside definition");
+}
+static void fpecatch(int sig)                  /* catch floating point exceptions */
 {
         execerror("floating point exception", (char *) 0);
 }
-int follow(int expect, int ifyes, int ifno) {
+static int follow(int expect, int ifyes, int ifno) {
 	int c = getc(fin);
 
 	if (c == expect)
@@ -165,7 +203,17 @@ int follow(int expect, int ifyes, int ifno) {
 	ungetc(c, stdin);
 	return ifno;
 }
-int yylex()                     /* hoc1 */
+static int backslash(int c) {		/* get next char with \'s interpreted */
+	char *strchr();		/* might need to use 'index() */
+	static char transtab[] = "b\bf\fn\nr\rt\t";
+	if (c != '\\')
+		return c;
+	c = getc(fin);
+	if (islower(c) && strchr(transtab, c))
+		return index(transtab, c)[1];
+	return c;
+}
+static int yylex()                     /* hoc1 */
 {
         //int c;
         while ((c = getc(fin)) == ' ' || c == '\t')
@@ -241,35 +289,13 @@ int yylex()                     /* hoc1 */
 
         return c;
 }
-int backslash(int c) {		/* get next char with \'s interpreted */
-	char *strchr();		/* might need to use 'index() */
-	static char transtab[] = "b\bf\fn\nr\rt\t";
-	if (c != '\\')
-		return c;
-	c = getc(fin);
-	if (islower(c) && strchr(transtab, c))
-		return index(transtab, c)[1];
-	return c;
-}
-void yyerror(char *s)
+
+static void yyerror(char *s)
 {
         warning(s, (char *) 0);
 }
 
-int warning(char *s, char *t)
-{
-        fprintf(stderr, "%s; %s", progname, s);
-        if (t)
-                fprintf(stderr, " %s", t);
-	if (infile)
-		fprintf(stderr, " in %s", t);
-        fprintf(stderr, " near line %d\n", lineno);
-	while (c != '\n' && c != EOF)
-		c = getc(fin);		/* flush rest of input line */
-	if (c == 'n')
-		lineno++;
-}
-int moreinput() {
+static int moreinput() {
 	if (gargc-- <= 0)
 		return 0;
 	if (fin && fin != stdin)
@@ -285,13 +311,42 @@ int moreinput() {
 	}
 	return 1;
 }
-void run() {		/* execute until EOF */
+static void run() {		/* execute until EOF */
 	setjmp(begin);
 	signal(SIGFPE, fpecatch);
 	for (initcode(); yyparse(); initcode())
 		execute(progbase);
 }
-
+static void varread() {		/* read into variable */
+	Datum d;
+	extern FILE *fin;
+	Symbol *var = (Symbol *) *pc++;
+   Again:
+	switch (fscanf(fin, "%lf", &var->u.val)) {
+	case EOF:
+		if (moreinput())
+			goto Again;
+		d.val = var->u.val = 0.0;
+		break;
+	case 0:
+		execerror("non-number read into", var->name);
+		break;
+	default:
+		d.val = 1.0;
+		break;
+	}
+	var->type = VAR;
+	push(d);
+}
+char *emalloc (unsigned n){
+	char *p;
+	//char *malloc();
+	p = (char*)malloc(n);
+	if (p == 0){
+		execerror("out of memory", (char *) 0);
+	}
+	return p;
+}
 
 
 

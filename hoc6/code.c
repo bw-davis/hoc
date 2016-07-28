@@ -1,4 +1,35 @@
 #include "code.h"
+#include "symbol.h"
+#include "hoc.h"
+#include "x.tab.h"
+#include <stdio.h>
+
+
+#define	NSTACK	256
+#define NPROG	2000
+#define NFRAME 100
+
+static 	Datum	stack[NSTACK];		/* the stack */
+static 	Datum	*stackp;		/* next free spot on stack */
+
+
+Inst	prog[NPROG];		/* the machine */
+Inst	*progp;				/* next free spot for code generation */
+Inst	*progbase = prog;	/* start of current subprogram */
+Inst 	*pc;				/* program counter during execution */
+int 	returning;			/* 1 if return stmt seen */
+
+
+
+typedef struct Frame {		/* proc/func call stack frame */
+	Symbol 	*sp;		/* symbol table entry */
+	Inst	*retpc;		/* where to resume after return */
+	Datum	*argn;		/* n-th argument on stack */
+	int nargs;		/* number of arguments */
+} Frame;
+
+Frame	frame[NFRAME];
+Frame	*fp;			/* frame pointer */
 
 void initcode() {		/* initialize for code generation */
 	progp = progbase;
@@ -22,10 +53,6 @@ Inst *code(Inst f) {		/* install one instruction or operand */
 		execerror("program too big", (char *) 0);
 	*progp++ = f;
 	return oprogp;
-}
-void execute(Inst *p) {		/* run the machine */
-	for (pc = p; *pc != STOP && !returning; )
-		(*(*pc++))();
 }
 void constpush() {		/* push constant onto the stack */
 	Datum d;
@@ -58,7 +85,7 @@ void mul() {
 	d1.val *= d2.val;
 	push(d1);
 }
-void div() {
+void divide() {
 	Datum d1, d2;
 	d2 = pop();
 	if (d2.val == 0.0)
@@ -220,13 +247,13 @@ void call() {			/* call a function */
 	if (fp++ >= &frame[NFRAME-1])
 		execerror(sp->name, "call nested too deeply");
 	fp->sp = sp;
-	fp->nargs = (int)pc[1];
+	fp->nargs = *(int *)(&pc[1]);
 	fp->retpc = pc + 2;
 	fp->argn = stackp - 1;		/* last argument */
-	execute(sp->u.defn);
+	execute(*(Inst **)sp->u.defn);
 	returning = 0;
 }
-void ret() {		/* common return from func or proc */
+static void ret() {		/* common return from func or proc */
 	int i;
 	for (i = 0; i < fp->nargs; i++)
 		pop();		/* pop arguments */
@@ -247,8 +274,8 @@ void procret() {		/* return from a procedure */
 		execerror(fp->sp->name, "(func) returns no value");
 	ret();
 }
-double *getarg() {		/* return pointer to argument */
-	int nargs = (int) *pc++;
+static double *getarg() {		/* return pointer to argument */
+	int nargs = *(int*)pc++;
 	if (nargs > fp->nargs)
 		execerror(fp->sp->name, "not enough arguments");
 	return &fp->argn[nargs - fp->nargs].val;
@@ -267,26 +294,9 @@ void argassign() {		/* store top of stack in argument */
 void prstr() {			/* print string value */
 	printf("%s", (char *) *pc++);
 }
-void varread() {		/* read into variable */
-	Datum d;
-	extern FILE *fin;
-	Symbol *var = (Symbol *) *pc++;
-   Again:
-	switch (fscanf(fin, "%lf", &var->u.val)) {
-	case EOF:
-		if (moreinput())
-			goto Again;
-		d.val = var->u.val = 0.0;
-		break;
-	case 0:
-		execerror("non-number read into", var->name);
-		break;
-	default:
-		d.val = 1.0;
-		break;
-	}
-	var->type = VAR;
-	push(d);
+void execute(Inst *p) {		/* run the machine */
+	for (pc = p; *pc != STOP && !returning; )
+		(*(*pc++))();
 }
 
 

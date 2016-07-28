@@ -1,4 +1,5 @@
 #include "init.h"
+#include "symbol.h"
 
 void init() {		/* install constants and built-ins in table */
 	int i;

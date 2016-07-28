@@ -1,9 +1,8 @@
-//#include "hoc.h"
-//#include "y.tab.h"
+#include "hoc.h"
 #include "symbol.h"
-//#include <string.h>
+#include <string.h>
 
-//static Symbol *symlist = 0;		/* symbol table: linked list */
+static Symbol *symlist = 0;		/* symbol table: linked list */
 
 Symbol *lookup( char *s){		/* find s in symbol table */
 	Symbol *sp;
@@ -30,12 +29,4 @@ Symbol *install(char *s, int t, double d){
 	return sp;
 }
 
-char *emalloc (unsigned n){
-	char *p;
-	char *malloc();
-	p = malloc(n);
-	if (p == 0){
-		execerror("out of memory", (char *) 0);
-	}
-	return p;
-}
+

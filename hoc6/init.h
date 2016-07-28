@@ -1,6 +1,7 @@
-#include "hoc.h"
-#include "y.tab.h"
 #include <math.h>
+#include "symbol.h"
+#include "code.h"
+#include "y.tab.h"
 
 extern double Log(), Log10(), Exp(), Sqrt(), integer();
 static struct {
@@ -40,4 +41,4 @@ static struct {			/* Keywords */
 	"print",	PRINT,
 	0,		0,
 };
-//init();
+void init();
