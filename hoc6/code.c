@@ -1,35 +1,29 @@
 #include "code.h"
-#include "symbol.h"
-#include "hoc.h"
 #include "x.tab.h"
+#include "hoc.h"
 #include <stdio.h>
 
+#define NSTACK 256
+static Datum stack[NSTACK];	/* the stack */
+static Datum *stackp;		/* next free spot on the stack */
 
-#define	NSTACK	256
-#define NPROG	2000
-#define NFRAME 100
-
-static 	Datum	stack[NSTACK];		/* the stack */
-static 	Datum	*stackp;		/* next free spot on stack */
-
-
-Inst	prog[NPROG];		/* the machine */
-Inst	*progp;				/* next free spot for code generation */
-Inst	*progbase = prog;	/* start of current subprogram */
-Inst 	*pc;				/* program counter during execution */
-int 	returning;			/* 1 if return stmt seen */
-
-
+#define NPROG 2000
+Inst prog[NPROG];	/* the machine */
+Inst *progp;		/* next free spot for code generation */
+static Inst *pc;		/* program counter during execution */
+Inst *progbase = prog;		/* start of current subprogram */
+static int returning;		/* 1 if return statement seen */
 
 typedef struct Frame {		/* proc/func call stack frame */
-	Symbol 	*sp;		/* symbol table entry */
-	Inst	*retpc;		/* where to resume after return */
-	Datum	*argn;		/* n-th argument on stack */
-	int nargs;		/* number of arguments */
+	Symbol *sp;		/* symbol table entry */
+	Inst *retpc;		/* where to resume after return */
+	Datum *argn;		/* n-th argument on stack */
+	long nargs;		/* number of arguments */
 } Frame;
 
-Frame	frame[NFRAME];
-Frame	*fp;			/* frame pointer */
+#define NFRAME 100
+static Frame frame[NFRAME];
+static Frame *fp;		/* frame pointer */
 
 void initcode() {		/* initialize for code generation */
 	progp = progbase;
@@ -37,13 +31,15 @@ void initcode() {		/* initialize for code generation */
 	fp = frame;
 	returning = 0;
 }
+
 void push(Datum d) {		/* push d onto the stack */
 	if (stackp >= &stack[NSTACK])
 		execerror("stack overflow", (char *) 0);
 	*stackp++ = d;
 }	
+
 Datum pop() {		/* pop and return top elem from stack */
-	if (stackp == stack)
+	if (stackp <= stack)
 		execerror("stack underflow", (char *) 0);
 	return *--stackp;
 }
@@ -53,6 +49,10 @@ Inst *code(Inst f) {		/* install one instruction or operand */
 		execerror("program too big", (char *) 0);
 	*progp++ = f;
 	return oprogp;
+}
+void execute(Inst *p) {		/* run the machine */
+	for (pc = p; *pc != STOP && !returning; )
+		(*(*pc++))();
 }
 void constpush() {		/* push constant onto the stack */
 	Datum d;
@@ -85,27 +85,26 @@ void mul() {
 	d1.val *= d2.val;
 	push(d1);
 }
-void divide() {
+void div() {
 	Datum d1, d2;
 	d2 = pop();
 	if (d2.val == 0.0)
-			execerror("division by zero", (char *)0);
-		d1 = pop();
+		execerror ("division by zero", (char *)0);
+	d1 = pop();
 	d1.val /= d2.val;
 	push(d1);
 }
 void negate() {
-	Datum d1;
-	d1 = pop();
-	d1.val = d1.val * (-1);
-	push(d1);
+	Datum d;
+	d = pop();
+	d.val = - d.val;
+	push(d);
 }
 void power() {
-	Datum d1, d2;
 	extern double Pow();
+	Datum d1, d2;
 	d2 = pop();
 	d1 = pop();
-	int i;
 	d1.val = Pow(d1.val, d2.val);
 	push(d1);
 }
@@ -113,7 +112,7 @@ void eval() {		/* evaluate variable on stack */
 	Datum d;
 	d = pop();
 	if (d.sym->type != VAR && d.sym->type != UNDEF)
-			execerror("attempt to evaluate non-variable", d.sym->name);
+		execerror("attempt to evaluate non-variable", d.sym->name);
 	if (d.sym->type == UNDEF)
 		execerror("undefined variable", d.sym->name);
 	d.val = d.sym->u.val;
@@ -187,21 +186,21 @@ void and() {
 	Datum d1, d2;
         d2 = pop();
         d1 = pop();
-        d1.val = (double)(d1.val != 0.0 && d2.val != 0.0);
+        d1.val = (double)((d1.val != 0.0) && (d2.val != 0.0));
         push(d1);
 }
 void or() {
 	Datum d1, d2;
         d2 = pop();
         d1 = pop();
-        d1.val = (double)(d1.val != 0.0 || d2.val != 0.0);
+        d1.val = (double)((d1.val != 0.0) || (d2.val != 0.0));
         push(d1);
 }
 void not() {
-	Datum d1;
-	d1 = pop();
-	d1.val = (double)( d1.val == 0.0);
-	push(d1);
+	Datum d;
+	d = pop();
+	d.val = (double)(d.val == 0.0);
+	push(d);
 }
 void whilecode() {
 	Datum d;
@@ -235,10 +234,10 @@ void ifcode() {
 void prexpr() {		/* print numeric value */
 	Datum d;
 	d = pop();
-	printf("%.8g\n", d.val);
+	printf("%.8g ", d.val);
 }
 void define(Symbol *sp) {		/* put func/proc in symbol table */
-	sp->u.defn = (Inst)progbase;		/* start of code */
+	sp->u.defn = (Inst)progbase;	/* start of code */
 	progbase = progp;		/* next code starts here */
 }
 void call() {			/* call a function */
@@ -247,14 +246,14 @@ void call() {			/* call a function */
 	if (fp++ >= &frame[NFRAME-1])
 		execerror(sp->name, "call nested too deeply");
 	fp->sp = sp;
-	fp->nargs = *(int *)(&pc[1]);
+	fp->nargs = *(long *)(&pc[1]);
 	fp->retpc = pc + 2;
 	fp->argn = stackp - 1;		/* last argument */
-	execute(*(Inst **)sp->u.defn);
+	execute((Inst *)(sp->u.defn));
 	returning = 0;
 }
-static void ret() {		/* common return from func or proc */
-	int i;
+void ret() {		/* common return from func or proc */
+	long i;
 	for (i = 0; i < fp->nargs; i++)
 		pop();		/* pop arguments */
 	pc = (Inst *)fp->retpc;
@@ -274,8 +273,8 @@ void procret() {		/* return from a procedure */
 		execerror(fp->sp->name, "(func) returns no value");
 	ret();
 }
-static double *getarg() {		/* return pointer to argument */
-	int nargs = *(int*)pc++;
+double *getarg() {		/* return pointer to argument */
+	long nargs = *(long *)(pc++);
 	if (nargs > fp->nargs)
 		execerror(fp->sp->name, "not enough arguments");
 	return &fp->argn[nargs - fp->nargs].val;
@@ -294,19 +293,24 @@ void argassign() {		/* store top of stack in argument */
 void prstr() {			/* print string value */
 	printf("%s", (char *) *pc++);
 }
-void execute(Inst *p) {		/* run the machine */
-	for (pc = p; *pc != STOP && !returning; )
-		(*(*pc++))();
+void varread() {		/* read into variable */
+	Datum d;
+	extern FILE *fin;
+	Symbol *var = (Symbol *) *pc++;
+   Again:
+	switch (fscanf(fin, "%lf", &var->u.val)) {
+	case EOF:
+		if (moreinput())
+			goto Again;
+		d.val = var->u.val = 0.0;
+		break;
+	case 0:
+		execerror("non-number read into", var->name);
+		break;
+	default:
+		d.val = 1.0;
+		break;
+	}
+	var->type = VAR;
+	push(d);
 }
-
-
-
-
-
-
-
-
-
-
-
-

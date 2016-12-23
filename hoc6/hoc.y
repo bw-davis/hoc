@@ -3,24 +3,31 @@
 #include "code.h"
 #include "symbol.h"
 #include <stdio.h>
-#include <stdlib.h>
 #include <ctype.h>
 #include <signal.h>
 #include <setjmp.h>
-
+#include <string.h>
 #define code2(c1,c2)	code(c1); code(c2)
 #define code3(c1,c2,c3)	code(c1); code(c2); code(c3)
 
+void init();
+void run();
+void defnonly(char *s);
+void fpecatch(int sig);
+int follow(int expect, int ifyes, int ifno);
+int yylex();
+int backslash(int c);
+void yyerror(char *s);
+void warning(char *s, char *t);
+
+extern Inst prog[], *progp, *progbase;
+
 int indef;
-static void varread();
-static void yyerror(char *s);
-static int yylex();
-static void defnonly(char *s);
 %}
 %union {
 	Symbol 	*sym;		/* symbol table pointer */
 	Inst 	*inst;		/* machine instruction */
-	int		narg;		/* number of arguments */
+	long	narg;		/* number of arguments */
 }
 %token	<sym>	NUMBER STRING PRINT VAR BLTIN UNDEF WHILE IF ELSE
 %token	<sym>	FUNCTION PROCEDURE RETURN FUNC PROC READ
@@ -47,7 +54,7 @@ list:		/* nothing */
 	| list error '\n'	{ yyerrok; }
 	;
 asgn:	  VAR '=' expr 		{ code3(varpush,(Inst)$1, assign); $$=$3; }
-	| ARG '=' expr 		{ defnonly("$"); code2(argassign, (Inst)$1); $$=$3; }
+	| ARG '=' expr 		{ defnonly("$"); code2(argassign,(Inst)$1); $$=$3; }
 	;
 stmt:	expr			{ code((Inst)pop); }
 	| RETURN		{ defnonly("return"); code(procret); }
@@ -55,7 +62,6 @@ stmt:	expr			{ code((Inst)pop); }
 	| PROCEDURE begin '(' arglist ')'
 				{ $$ = $2; code3(call, (Inst)$1, (Inst)$4); }
 	| PRINT prlist		{ $$ = $2; }
-	/*| PRINT expr		{ code(prexpr); $$ = $2; }*/
 	| while cond stmt end {
 			($1)[1] = (Inst)$3;		/* body of loop */
 			($1)[2] = (Inst)$4; }		/* end, if cond fails */
@@ -76,7 +82,8 @@ if:	  IF	{ $$=code(ifcode); code3(STOP, STOP, STOP); }
 	;
 begin:		/* nothing */	{ $$ = progp; }
 	;
-end:	  /* nothing */
+end:	  /* nothing */		{ code(STOP); $$ = progp; }
+	;
 stmtlist:	/* nothing */	{ $$ = progp; }
 	| stmtlist '\n'
 	| stmtlist stmt
@@ -94,7 +101,7 @@ expr:	 NUMBER		{ $$ = code2(constpush, (Inst)$1); }
 	| expr '+' expr 	{ code(add); }
 	| expr '-' expr		{ code(sub); }
 	| expr '*' expr		{ code(mul); }
-	| expr '/' expr		{ code(divide); }
+	| expr '/' expr		{ code(div); }
 	| expr '^' expr		{ code(power); }
 	| '-' expr %prec UNARYMINUS	{ $$ = $2; code(negate); }
 	| expr GT expr		{ code(gt); }
@@ -113,7 +120,7 @@ prlist:	 expr			{ code(prexpr); }
 	| prlist ',' STRING	{ code2(prstr, (Inst)$3); }
 	;
 defn:	 FUNC procname		{ $2->type=FUNCTION; indef=1; }
-	   '(' ')' stmt		{ code(procret); define($2); indef=0; }
+	   '(' ')' stmt		{ code(funcret); define($2); indef=0; }
 	| PROC procname		{ $2->type=PROCEDURE; indef=1; }
 	   '(' ')' stmt		{ code(procret); define($2); indef=0; }
 	;
@@ -128,94 +135,52 @@ arglist:	/* nothing */	{ $$ = 0; }
 	
 %%
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include "symbol.h"
-#include "code.h"
-#include "hoc.h"
-#include "init.h"
-
-
-jmp_buf begin;
-char *infile;			/* input file name */
-FILE *fin;				/* input file pointer */
-char **gargv;			/* global argument list */
-int gargc;
-int c;		/* global for use by warning() */
-char *progname;         /* for error messages */
 int lineno = 1;
-extern Inst *pc;
-
-static int moreinput();
-static void run();
+jmp_buf begin;
+char *infile;		/* input file name */
+FILE *fin;		/* input file pointer */
+char **gargv;		/* global argument list */
+int gargc;		/* global number of arguments */
+int c;			/* global used by warning() */
+char *progname;		/* for error messages */
 
 int main(int argc, char *argv[])        /* hoc2 */
 {
-        int i;
-
   	progname = argv[0];
 	if (argc == 1) {		/* fake an argument list */
 		static char *stdinonly[] = { "-" };
 		gargv = stdinonly;
 		gargc = 1;
 	} else {
-		gargv = argv+1;
-		gargc = 1;
+		gargv = argv + 1;
+		gargc = argc - 1;
 	}
 	init();
 	while (moreinput())
 		run();
 	return 0;
 }
-static int warning(char *s, char *t)
-{
-        fprintf(stderr, "%s; %s", progname, s);
-        if (t)
-                fprintf(stderr, " %s", t);
-	if (infile)
-		fprintf(stderr, " in %s", t);
-        fprintf(stderr, " near line %d\n", lineno);
-	while (c != '\n' && c != EOF)
-		c = getc(fin);		/* flush rest of input line */
-	if (c == 'n')
-		lineno++;
-}
-void execerror(char *s, char *t)                /* recover run-time error */
-{
-        warning(s, t);
-	fseek(fin, 0L, 2);		/* flush rest of file */
-        longjmp(begin, 0);
-}
-static void defnonly(char *s) {		/* warns if illegal definition */
+
+void defnonly(char *s) {		/* warns if illegal definition */
 	if (!indef)
 		execerror(s, "used outside definition");
 }
-static void fpecatch(int sig)                  /* catch floating point exceptions */
+
+void fpecatch(int sig)                  /* catch floating point exceptions */
 {
+    if (sig == SIGFPE)
         execerror("floating point exception", (char *) 0);
 }
-static int follow(int expect, int ifyes, int ifno) {
+int follow(int expect, int ifyes, int ifno) {
 	int c = getc(fin);
 
 	if (c == expect)
 		return ifyes;
-	ungetc(c, stdin);
+	ungetc(c, fin);
 	return ifno;
 }
-static int backslash(int c) {		/* get next char with \'s interpreted */
-	char *strchr();		/* might need to use 'index() */
-	static char transtab[] = "b\bf\fn\nr\rt\t";
-	if (c != '\\')
-		return c;
-	c = getc(fin);
-	if (islower(c) && strchr(transtab, c))
-		return index(transtab, c)[1];
-	return c;
-}
-static int yylex()                     /* hoc1 */
+int yylex()                     /* hoc1 */
 {
-        //int c;
         while ((c = getc(fin)) == ' ' || c == '\t')
                 ;
         if (c == EOF)
@@ -227,12 +192,6 @@ static int yylex()                     /* hoc1 */
 		yylval.sym = install("", NUMBER, d);
                 return NUMBER;
         }
-        /*if (islower(c)) {
-                yylval.sym = c - 'a';          ASCII only 
-                return VAR;
-        }
-        if (c == '\n')
-                lineno++;*/
 	if (isalpha(c)){
 		Symbol *s;
 		char sbuf[100], *p = sbuf;
@@ -251,7 +210,7 @@ static int yylex()                     /* hoc1 */
 		return s->type == UNDEF ? VAR : s->type;
 	}
 	if (c == '$') { 	/* argument? */
-		int n = 0;
+		long n = 0;
 		while (isdigit(c=getc(fin)))
 			n = 10 * n + c - '0';
 		ungetc(c, fin);
@@ -261,7 +220,7 @@ static int yylex()                     /* hoc1 */
 		return ARG;
 	}
 	if (c == '"') {		/* quoted string */
-		char sbuf[100], *p, *emalloc();
+		char sbuf[100], *p;
 		for (p = sbuf; (c=getc(fin)) != '"'; p++) {
 			if (c == '\n' || c == EOF)
 				execerror("missing quote", "");
@@ -271,12 +230,12 @@ static int yylex()                     /* hoc1 */
 			}
 			*p = backslash(c);
 		}
-		*p = 0;
+		*p = '\0';
 		yylval.sym = (Symbol *)emalloc(strlen(sbuf)+1);
 		strcpy((char *)yylval.sym, sbuf);
 		return STRING;
 	}
-	 switch(c) {
+	switch(c) {
                 case '>':       return follow('=', GE, GT);
                 case '<':       return follow('=', LE, LT);
                 case '=':       return follow('=', EQ, '=');
@@ -286,16 +245,36 @@ static int yylex()                     /* hoc1 */
                 case '\n':      lineno++; return '\n';
                 default:        return c;
         }
-
-        return c;
 }
-
-static void yyerror(char *s)
+int backslash(int c) {		/* get next char with \'s interpreted */
+	char *strchr();		/* might need to use 'index() */
+	static char transtab[] = "b\bf\fn\nr\rt\t";
+	if (c != '\\')
+		return c;
+	c = getc(fin);
+	if (islower(c) && strchr(transtab, c))
+		return strchr(transtab, c)[1];
+	return c;
+}
+void yyerror(char *s)
 {
         warning(s, (char *) 0);
 }
 
-static int moreinput() {
+void warning(char *s, char *t)
+{
+        fprintf(stderr, "%s; %s", progname, s);
+        if (t)
+                fprintf(stderr, " %s", t);
+	if (infile)
+		fprintf(stderr, " in %s", infile);
+        fprintf(stderr, " near line %d\n", lineno);
+	while (c != '\n' && c != EOF)
+		c = getc(fin);		/* flush rest of input line */
+	if (c == '\n')
+		lineno++;
+}
+int moreinput() {
 	if (gargc-- <= 0)
 		return 0;
 	if (fin && fin != stdin)
@@ -304,49 +283,30 @@ static int moreinput() {
 	lineno = 1;
 	if (strcmp(infile, "-") == 0) {
 		fin = stdin;
-		infile = 0;
+		infile = NULL;
 	} else if ((fin=fopen(infile, "r")) == NULL) {
 		fprintf(stderr, "%s: can't open %s\n", progname, infile);
 		return moreinput();
 	}
 	return 1;
 }
-static void run() {		/* execute until EOF */
+void run() {		/* execute until EOF */
 	setjmp(begin);
 	signal(SIGFPE, fpecatch);
 	for (initcode(); yyparse(); initcode())
 		execute(progbase);
 }
-static void varread() {		/* read into variable */
-	Datum d;
-	extern FILE *fin;
-	Symbol *var = (Symbol *) *pc++;
-   Again:
-	switch (fscanf(fin, "%lf", &var->u.val)) {
-	case EOF:
-		if (moreinput())
-			goto Again;
-		d.val = var->u.val = 0.0;
-		break;
-	case 0:
-		execerror("non-number read into", var->name);
-		break;
-	default:
-		d.val = 1.0;
-		break;
-	}
-	var->type = VAR;
-	push(d);
+
+void execerror(char *s, char *t) {	/* recover from run-time error */
+	warning(s, t);
+	fseek(fin, 0L, 2);		/* flush rest of file */
+	longjmp(begin, 0);
 }
-char *emalloc (unsigned n){
-	char *p;
-	//char *malloc();
-	p = (char*)malloc(n);
-	if (p == 0){
-		execerror("out of memory", (char *) 0);
-	}
+
+void *emalloc(unsigned n) {
+	void *p;
+
+	if ((p = malloc(n)) == NULL)
+		execerror("out of memory", NULL);
 	return p;
 }
-
-
-
